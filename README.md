@@ -1,0 +1,2 @@
+# guardianbansync
+Discord Ban Sync 
