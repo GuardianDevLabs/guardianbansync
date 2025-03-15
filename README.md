@@ -16,7 +16,7 @@ This resource for FiveM ensures players are properly linked to your Discord serv
 2. Extract it to your `resources` folder.
 3. Add this resource to your `server.cfg`:
    ```bash
-   start GuardianBanSync
+   ensure GuardianBanSync
 
 # Configuration
 ` The configuration for this script is located in the config/config.lua file. Modify the following parameters based on your server's settings: `
