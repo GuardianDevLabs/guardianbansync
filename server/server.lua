@@ -1,6 +1,7 @@
 function getPlayerDiscord(playerId)
     print("🔍 Checking Discord ID for Player:", playerId)
 
+    -- Loop through all identifiers to find the Discord identifier
     for i = 0, GetNumPlayerIdentifiers(playerId) - 1 do
         local identifier = GetPlayerIdentifier(playerId, i)
         print("🆔 Identifier Found:", identifier) -- Debugging
@@ -17,14 +18,23 @@ function getPlayerDiscord(playerId)
 end
 
 function isUserInDiscord(discordId, callback)
+    print("Checking if Discord ID is in server...")
+    print("Guild ID: " .. Config.GuildID)
+    print("Discord ID: " .. discordId)
+
     local url = "https://discord.com/api/v10/guilds/" .. Config.GuildID .. "/members/" .. discordId
-
     PerformHttpRequest(url, function(statusCode, response, headers)
-        print("📡 Discord Membership API Response:", statusCode, response) -- Debugging
-
+        print("📡 Discord Membership API Response:", statusCode, response)  -- Debugging
         if statusCode == 200 then
             callback(true)
+        elseif statusCode == 403 then
+            print("❌ Bot lacks permission to view the member list.")
+            callback(false)
+        elseif statusCode == 404 then
+            print("❌ Player not found in server. This may also indicate the wrong Discord ID or Guild ID.")
+            callback(false)
         else
+            print("❌ API Error. Status Code: " .. statusCode)
             callback(false)
         end
     end, "GET", "", { ["Authorization"] = "Bot " .. Config.BotToken })
@@ -37,7 +47,12 @@ function isUserBanned(discordId, callback)
         print("📡 Discord Ban API Response:", statusCode, response) -- Debugging
 
         if statusCode == 200 then
-            callback(true)
+            local banData = json.decode(response)
+            local bannedBy = banData.user.username .. "#" .. banData.user.discriminator -- Banned user's info
+            local banReason = banData.reason or "No reason provided" -- Handle case where no reason is given
+
+            -- Pass correct bannedBy and banReason
+            callback(true, banReason, bannedBy)
         else
             callback(false)
         end
@@ -60,7 +75,7 @@ function logBanAttempt(discordId, playerName, playerIp)
         },
         timestamp = os.date("!%Y-%m-%dT%H:%M:%S")
     }
-    
+
     local payload = {
         username = "Ban Logger",
         embeds = { embed }
@@ -80,56 +95,36 @@ function logBanAttempt(discordId, playerName, playerIp)
     )
 end
 
-function sendStyledKickMessage(setKickReason, deferrals, title, subtitle, description)
+function sendStyledKickMessage(setKickReason, deferrals, messageContent, isBan)
+    -- Adjusted box size to be slightly bigger, 10px wider on the right side, smaller height, and much larger logo
     local message = [[
-        <style>
-            body {
-                font-family: Arial, sans-serif;
-                color: white;
-                margin: 0;
-                padding: 0;
-                background-color: #2d2d2d;
-            }
-            .message-box {
-                width: 550px;
-                margin: auto;
-                background-color: #333;
-                border: 5px solid #ff0000; /* Red border */
-                padding: 30px;
-                border-radius: 15px;
-                box-shadow: 0 0 25px rgba(255, 0, 0, 0.8);
-                text-align: center;
-            }
-            .title {
-                font-size: 30px;
-                font-weight: bold;
-                color: #ff6666;
-                margin-bottom: 15px;
-                border-bottom: 2px solid #ff6666;
-            }
-            .subtitle {
-                font-size: 22px;
-                color: #e0e0e0;
-                margin-bottom: 20px;
-            }
-            .description {
-                font-size: 20px;
-                color: #cccccc;
-            }
-            .appeal {
-                font-size: 16px;
-                color: #b3b3b3;
-                font-style: italic;
-                margin-top: 25px;
-            }
-        </style>
-        <div class="message-box">
-            <div class="title">🚫 ]] .. title .. [[</div>
-            <div class="subtitle">]] .. subtitle .. [[</div>
-            <div class="description">]] .. description .. [[</div>
-            <div class="appeal">🔗 Join our Discord for more information.</div>
-        </div>
+        <div style="background-color: rgba(30, 30, 30, 0.5); padding: 10px; border: solid 2px #354557; border-radius: 10px; margin-top: 10px; position: relative; width: calc(100% - 20px); height: 350px; max-width: calc(100% - 20px); box-sizing: border-box; margin-left: auto; margin-right: auto;">
+            <h1 style="color: #8A2BE2; font-size: 2rem; margin: 0; padding-bottom: 5px;">]] .. Config.ServerName .. [[</h1>
     ]]
+
+    -- If it's a ban message, place it right under the server name
+    if isBan then
+        message = message .. [[
+            <p style="font-size: 1.3rem; font-weight: bold; margin: 5px 0 0 0; padding: 0; line-height: 1.4;">
+                ]] .. messageContent .. [[
+            </p>
+        ]]
+    else
+        -- Otherwise, use normal message styling
+        message = message .. [[
+            <p style="font-size: 1.3rem; margin: 10px 0; padding: 0; line-height: 1.6;">
+                ]] .. messageContent .. [[
+            </p>
+        ]]
+    end
+
+    -- Adjust logo size and position (much larger size)
+    message = message .. [[
+        <img src="]] .. Config.ServerLogo .. [[" style="position: absolute; right: 15px; bottom: 15px; opacity: 65%; max-width: 200px; max-height: 200px;">
+        </div>
+    ]] 
+
+    -- Send the message
     deferrals.done(message)
 end
 
@@ -140,25 +135,35 @@ AddEventHandler("playerConnecting", function(name, setKickReason, deferrals)
     local playerIp = GetPlayerEndpoint(playerId) or "Unknown"
 
     if not discordId then
-        sendStyledKickMessage(setKickReason, deferrals, "Discord Not Linked", "You must link your Discord to join.", "Please ensure your Discord is connected.")
+        sendStyledKickMessage(setKickReason, deferrals, "Please ensure your Discord is connected.", false)
         return
     end
 
-    -- Check if the user is banned first
-    isUserBanned(discordId, function(isBanned)
+    print("Checking if player with Discord ID " .. discordId .. " is banned or in the Discord server.")
+
+    -- First, check if the user is banned
+    isUserBanned(discordId, function(isBanned, banReason)
         if isBanned then
             logBanAttempt(discordId, name, playerIp)
-            sendStyledKickMessage(setKickReason, deferrals, "You Are Banned", "You are banned from our Discord server.", "If you believe this was a mistake, contact staff at " .. Config.DiscordInvite)
-            return
-        end
+            -- Send ban message with appeal link and proper line breaks
+            sendStyledKickMessage(setKickReason, deferrals, 
+                [[Banned By: Guardian Core BanSync<br>Ban Reason: ]] .. (banReason or "No reason provided") .. [[
 
-        -- Only check if they are in the Discord server after confirming they aren’t banned
-        isUserInDiscord(discordId, function(isMember)
-            if not isMember then
-                sendStyledKickMessage(setKickReason, deferrals, "Not in Discord Server", "You must be in our Discord server to join.", "Join here: " .. Config.DiscordInvite)
-            else
-                deferrals.done()
-            end
-        end)
+<br><br><br><br><br><a href="]] .. Config.AppealLink .. [[" style="color: #8A2BE2;">Click here to appeal your ban</a>
+]], true)
+        else
+            -- If not banned, check if the user is in the Discord server
+            isUserInDiscord(discordId, function(isMember)
+                if not isMember then
+                    sendStyledKickMessage(setKickReason, deferrals, 
+                        [[<span style="color: white; font-weight: bold;">You must join our Discord server to play.</span><br><br><br><br><br><br><a href="]] .. Config.DiscordInvite .. [[" style="color: #8A2BE2;">Click here to join our Discord</a>
+                    ]], false)
+                    print("Player is not in the Discord server.")
+                else
+                    deferrals.done()  -- Player can connect if they are in the server and not banned
+                    print("Player is in the Discord server.")
+                end
+            end)
+        end
     end)
 end)
