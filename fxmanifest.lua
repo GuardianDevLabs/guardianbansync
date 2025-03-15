@@ -1,7 +1,7 @@
 fx_version 'cerulean'
 game 'gta5'
 
-author 'GuardianDevLabs'
+author 'GuardianLabs'
 description 'Discord Ban Sync - Made by GuardianLabs'
 version '1.0.0'
 
